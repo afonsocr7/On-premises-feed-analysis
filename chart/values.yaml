@@ -1,0 +1,34 @@
+image:
+  registry: feed
+  tag: dev                
+  pullPolicy: IfNotPresent
+api:
+  replicas: 2
+  summaryWindow: 50     
+  resources:
+    requests: { cpu: 50m, memory: 96Mi }
+    limits: { memory: 256Mi }
+ingester:
+  replicas: 1
+  pollSeconds: 60
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 192Mi }
+analyzer:
+  replicas: 2
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 192Mi }
+llm:
+  replicas: 2
+  model: gemma3:1b  
+  imageTag: gemma3-1b     
+  resources:
+    requests: { cpu: 500m, memory: 1536Mi }
+    limits: { memory: 3Gi }
+postgres:
+  instances: 3
+  storage: 2Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 512Mi }

@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Feed analysis</title>
+<style>
+body{font:15px system-ui,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem}
+form{display:flex;gap:.5rem;margin-bottom:1.5rem}
+input,select,button{font:inherit;padding:.4rem .6rem}input{flex:1}
+table{width:100%;border-collapse:collapse}th,td{text-align:left;padding:.5rem;border-bottom:1px solid #ccc}
+.positive{color:#1a7f37}.negative{color:#cf222e}.neutral{color:#666}.err{color:#cf222e}
+</style></head><body>
+<h1>Feed analysis</h1>
+<form id="f">
+ <select id="kind"><option value="handle">Handle</option><option value="hashtag">Hashtag</option></select>
+ <input id="value" placeholder="alice.bsky.social or #topic" required>
+ <button>Subscribe</button>
+</form>
+<div id="msg" class="err"></div>
+<table><thead><tr><th>Subscription</th><th>Sentiment</th><th>Items</th><th>Updated</th><th></th></tr></thead>
+<tbody id="rows"></tbody></table>
+<script>
+const $=id=>document.getElementById(id);
+function cell(tr,text,cls){const td=tr.insertCell();td.textContent=text;if(cls)td.className=cls;return td}
+async function load(){
+  const r=await fetch('/api/subscriptions');const subs=await r.json();
+  const body=$('rows');body.replaceChildren();
+  for(const s of subs){
+    const tr=body.insertRow();
+    cell(tr,(s.kind==='handle'?'@':'#')+s.value);
+    cell(tr,s.label?`${s.label} (+${s.positive} / ${s.neutral} / -${s.negative})`:'pending',s.label);
+    cell(tr,s.item_count);
+    cell(tr,s.updated_at?new Date(s.updated_at).toLocaleString():'never');
+    const b=document.createElement('button');b.textContent='Unsubscribe';
+    b.onclick=async()=>{await fetch('/api/subscriptions/'+s.id,{method:'DELETE'});load()};
+    tr.insertCell().append(b);
+  }
+}
+$('f').onsubmit=async e=>{
+  e.preventDefault();$('msg').textContent='';
+  const r=await fetch('/api/subscriptions',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({kind:$('kind').value,value:$('value').value})});
+  if(!r.ok){$('msg').textContent=(await r.json()).detail;return}
+  $('value').value='';load();
+};
+load();setInterval(load,15000);
+</script></body></html>

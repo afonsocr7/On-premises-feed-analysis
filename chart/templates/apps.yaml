@@ -1,0 +1,71 @@
+{{- range $n := list "ingester" "analyzer" "api" }}
+{{- $v := index $.Values $n }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: {{ $n }} }
+spec:
+  replicas: {{ $v.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } }
+  selector: { matchLabels: { app: {{ $n }} } }
+  template:
+    metadata: { labels: { app: {{ $n }} } }
+    spec:
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, seccompProfile: { type: RuntimeDefault } }
+      # spread replicas over nodes so one node failure cannot take the service down
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector: { matchLabels: { app: {{ $n }} } }
+      containers:
+        - name: {{ $n }}
+          image: {{ $.Values.image.registry }}/{{ $n }}:{{ $.Values.image.tag }}
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          env:
+            - name: DATABASE_URL
+              valueFrom: { secretKeyRef: { name: feed-db-app, key: uri } }
+            {{- if eq $n "analyzer" }}
+            - { name: LLM_URL, value: http://llm:11434 }
+            - { name: LLM_MODEL, value: {{ $.Values.llm.model | quote }} }
+            {{- end }}
+            {{- if eq $n "ingester" }}
+            - { name: POLL_SECONDS, value: {{ $v.pollSeconds | quote }} }
+            {{- end }}
+            {{- if eq $n "api" }}
+            - { name: SUMMARY_WINDOW, value: {{ $v.summaryWindow | quote }} }
+            {{- end }}
+          resources: {{ toYaml $v.resources | nindent 12 }}
+          securityContext: { allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: { drop: [ALL] } }
+          {{- if eq $n "api" }}
+          ports: [{ containerPort: 8000 }]
+          # startup: the API waits for Postgres at boot (schema init); allow up to 5 min before liveness applies
+          startupProbe: { httpGet: { path: /livez, port: 8000 }, periodSeconds: 5, failureThreshold: 60 }
+          # readiness checks the DB (stop routing traffic); liveness does NOT (a DB outage must not restart pods)
+          readinessProbe: { httpGet: { path: /healthz, port: 8000 }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /livez, port: 8000 }, periodSeconds: 10 }
+          {{- end }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: {{ $n }} }
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: {{ $n }} } }
+{{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: api }
+spec:
+  selector: { app: api }
+  ports: [{ port: 80, targetPort: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata: { name: api }
+spec:
+  rules:
+    - http:
+        paths:
+          - { path: /, pathType: Prefix, backend: { service: { name: api, port: { number: 80 } } } }

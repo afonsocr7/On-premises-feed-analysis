@@ -1,0 +1,39 @@
+apiVersion: v1
+kind: Service
+metadata: { name: llm }
+spec:
+  selector: { app: llm }
+  ports: [{ port: 11434 }]
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata: { name: llm }
+spec:
+  replicas: {{ .Values.llm.replicas }}
+  strategy: { type: RollingUpdate, rollingUpdate: { maxUnavailable: 1, maxSurge: 0 } }
+  selector: { matchLabels: { app: llm } }
+  template:
+    metadata: { labels: { app: llm } }
+    spec:
+      securityContext: { seccompProfile: { type: RuntimeDefault } }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector: { matchLabels: { app: llm } }
+      containers:
+        - name: ollama
+          image: {{ .Values.image.registry }}/llm:{{ .Values.llm.imageTag }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports: [{ containerPort: 11434 }]
+          resources: {{ toYaml .Values.llm.resources | nindent 12 }}
+          readinessProbe: { httpGet: { path: /, port: 11434 }, periodSeconds: 5 }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata: { name: llm }
+spec:
+  maxUnavailable: 1
+  selector: { matchLabels: { app: llm } }

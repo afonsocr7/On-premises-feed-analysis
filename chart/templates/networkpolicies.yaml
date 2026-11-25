@@ -1,0 +1,99 @@
+# Security boundary: default-deny, then explicit allows.
+# Only the `ingester` may reach the internet (the LLM model is baked into its image, so it needs no egress).
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: default-deny }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: allow-dns }
+spec:
+  podSelector: {}
+  policyTypes: [Egress]
+  egress:
+    - to: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ port: 53, protocol: UDP }, { port: 53, protocol: TCP }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: internet-egress }
+spec:
+  podSelector: { matchLabels: { app: ingester } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ ipBlock: { cidr: 0.0.0.0/0, except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16] } }]
+      ports: [{ port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: db-clients-egress }
+spec:
+  podSelector:
+    matchExpressions: [{ key: app, operator: In, values: [ingester, analyzer, api] }]
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { cnpg.io/cluster: feed-db } } }]
+      ports: [{ port: 5432 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: analyzer-to-llm }
+spec:
+  podSelector: { matchLabels: { app: analyzer } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { app: llm } } }]
+      ports: [{ port: 11434 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: llm-ingress }
+spec:
+  podSelector: { matchLabels: { app: llm } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ podSelector: { matchLabels: { app: analyzer } } }]
+      ports: [{ port: 11434 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: api-ingress-from-lan }
+spec:
+  podSelector: { matchLabels: { app: api } }
+  policyTypes: [Ingress]
+  ingress:
+    - from: [{ namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } } }]
+      ports: [{ port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: db-ingress }
+spec:
+  podSelector: { matchLabels: { cnpg.io/cluster: feed-db } }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - podSelector: { matchExpressions: [{ key: app, operator: In, values: [ingester, analyzer, api] }] }
+      ports: [{ port: 5432 }]
+    - from:
+        - podSelector: { matchLabels: { cnpg.io/cluster: feed-db } }
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: cnpg-system } }
+      ports: [{ port: 5432 }, { port: 8000 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: db-egress }
+spec:
+  podSelector: { matchLabels: { cnpg.io/cluster: feed-db } }
+  policyTypes: [Egress]
+  egress:
+    - to: [{ podSelector: { matchLabels: { cnpg.io/cluster: feed-db } } }]
+      ports: [{ port: 5432 }, { port: 8000 }]
+    - to:
+        - ipBlock: { cidr: 10.0.0.0/8 }
+        - ipBlock: { cidr: 172.16.0.0/12 }
+        - ipBlock: { cidr: 192.168.0.0/16 }
+      ports: [{ port: 6443 }, { port: 443 }]
